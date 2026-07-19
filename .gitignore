@@ -1,0 +1,81 @@
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+# Protects MOONSHOT_API_KEY and SERPAPI_KEY
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Distribution / Packaging ──────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# ── Testing & Coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# ── Type Checking & Linting ───────────────────────────────────────────────────
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# ── pydantic-ai Runtime Artifacts ─────────────────────────────────────────────
+# Logfire tracing (pydantic-ai's observability layer)
+logfire.json
+.logfire/
+*.trace
+
+# ── Generated Shopping Reports ────────────────────────────────────────────────
+# Files written by the --output-json flag and markdown exports at runtime
+reports/
+report.json
+report.md
+*.report.json
+*.report.md
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Jupyter (if notebooks ever added) ────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Claude Code (local-only settings) ─────────────────────────────────────────
+.claude/settings.local.json
+
+# ── IDE & Editors ─────────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp

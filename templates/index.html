@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🛒 Kimi K3 Grocery Planner</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1a1d21; --dim: #6b7280;
+    --accent: #0d7a4f; --accent-soft: #e6f4ee; --border: #e2e5e9;
+    --warn: #b45309; --warn-bg: #fef3e2; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101418; --card: #1a2027; --text: #e5e9ed; --dim: #8b95a1;
+      --accent: #34c98a; --accent-soft: #12271d; --border: #2a323c;
+      --warn: #f4a950; --warn-bg: #2b2113;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .tagline { color: var(--dim); margin: 0 0 1.5rem; font-size: .95rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+  }
+  form .row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .field { flex: 1; min-width: 180px; }
+  .field.small { flex: 0 0 130px; min-width: 130px; }
+  label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+  .hint { font-weight: 400; color: var(--dim); }
+  input {
+    width: 100%; padding: .55rem .7rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--bg); color: var(--text); font-size: 1rem;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: .65rem 1.4rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .55; cursor: wait; }
+  .note { font-size: .82rem; color: var(--dim); margin-top: .75rem; }
+  #progress { display: none; }
+  #progress pre {
+    font-family: var(--mono); font-size: .82rem; white-space: pre-wrap;
+    margin: 0; max-height: 260px; overflow-y: auto;
+  }
+  .spinner {
+    display: inline-block; width: .9em; height: .9em; border: 2px solid var(--accent);
+    border-right-color: transparent; border-radius: 50%; vertical-align: -2px;
+    animation: spin .8s linear infinite; margin-right: .4rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #error { display: none; border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+  /* Report styles (server-rendered HTML lands in #report) */
+  #report h2 { margin: 1.5rem 0 .5rem; }
+  #report h3 { margin: 1.5rem 0 .5rem; }
+  #report .summary { background: var(--accent-soft); border-color: var(--accent); }
+  #report table {
+    width: 100%; border-collapse: collapse; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: .92rem;
+  }
+  #report .table-scroll { overflow-x: auto; }
+  #report th, #report td { padding: .5rem .75rem; text-align: left; border-bottom: 1px solid var(--border); }
+  #report th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+  #report td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #report td.best { font-weight: 700; color: var(--accent); }
+  #report tr.unit-head td {
+    background: var(--bg); font-size: .78rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--dim);
+  }
+  #report .sub { font-size: .8rem; color: var(--dim); }
+  #report .ok { color: var(--accent); }
+  #report .warn { color: var(--warn); font-size: .8rem; }
+  #report .save { color: var(--accent); font-weight: 600; }
+  #report .dim { color: var(--dim); font-size: .88rem; }
+  #report .pick { border-color: var(--accent); }
+  #report .warn-card { border-color: var(--warn); background: var(--warn-bg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛒 Kimi K3 Grocery Planner</h1>
+  <p class="tagline">Multi-agent price comparison with per-price source verification — powered by Pydantic AI + Kimi K3</p>
+
+  <div class="card">
+    <form id="run-form">
+      <div class="row">
+        <div class="field">
+          <label for="locale">Location <span class="hint">— city/state or zip</span></label>
+          <input id="locale" name="locale" placeholder="Austin, TX" required>
+        </div>
+        <div class="field">
+          <label for="items">Items <span class="hint">— comma-separated</span></label>
+          <input id="items" name="items" placeholder="cherry tomatoes, broccoli" required>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field small">
+          <label for="max_stores">Max stores</label>
+          <input id="max_stores" type="number" value="6" min="1" max="12">
+        </div>
+        <div class="field small">
+          <label for="max_concurrency">Concurrency</label>
+          <input id="max_concurrency" type="number" value="4" min="1" max="8">
+        </div>
+      </div>
+      <button id="submit" type="submit">Find best prices</button>
+      <p class="note">A full run takes ~10–20 min at max reasoning effort (each store×item is scouted by its own agent). Keep this tab open.</p>
+    </form>
+  </div>
+
+  <div class="card" id="progress">
+    <p><span class="spinner"></span><strong id="phase">Running…</strong></p>
+    <pre id="log"></pre>
+  </div>
+
+  <div class="card" id="error"></div>
+  <div id="report"></div>
+</div>
+
+<script>
+const form = document.getElementById("run-form");
+const submitBtn = document.getElementById("submit");
+const progressBox = document.getElementById("progress");
+const logEl = document.getElementById("log");
+const phaseEl = document.getElementById("phase");
+const errorBox = document.getElementById("error");
+const reportEl = document.getElementById("report");
+let pollTimer = null;
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearInterval(pollTimer);
+  errorBox.style.display = "none";
+  reportEl.innerHTML = "";
+  logEl.textContent = "";
+  phaseEl.textContent = "Starting run…";
+  progressBox.style.display = "block";
+  submitBtn.disabled = true;
+
+  const body = {
+    locale: document.getElementById("locale").value.trim(),
+    items: document.getElementById("items").value.split(",").map(s => s.trim()).filter(Boolean),
+    max_stores: parseInt(document.getElementById("max_stores").value, 10) || 6,
+    max_concurrency: parseInt(document.getElementById("max_concurrency").value, 10) || 4,
+  };
+
+  try {
+    const resp = await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const detail = await resp.json().catch(() => ({}));
+      throw new Error(detail.detail ? JSON.stringify(detail.detail) : `HTTP ${resp.status}`);
+    }
+    const { run_id } = await resp.json();
+    poll(run_id);
+  } catch (err) {
+    fail(err.message);
+  }
+});
+
+function poll(runId) {
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/runs/${runId}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      logEl.textContent = data.progress.join("\n");
+      logEl.scrollTop = logEl.scrollHeight;
+      if (data.progress.length) phaseEl.textContent = data.progress[data.progress.length - 1];
+
+      if (data.status === "completed") {
+        finish();
+        reportEl.innerHTML = data.report_html;
+        reportEl.querySelectorAll("table").forEach(t => {
+          const wrap = document.createElement("div");
+          wrap.className = "table-scroll";
+          t.parentNode.insertBefore(wrap, t);
+          wrap.appendChild(t);
+        });
+      } else if (data.status === "failed") {
+        finish();
+        fail(data.error || "Run failed");
+      }
+    } catch (err) {
+      finish();
+      fail(err.message);
+    }
+  }, 2000);
+}
+
+function finish() {
+  clearInterval(pollTimer);
+  progressBox.style.display = "none";
+  submitBtn.disabled = false;
+}
+
+function fail(msg) {
+  progressBox.style.display = "none";
+  submitBtn.disabled = false;
+  errorBox.style.display = "block";
+  errorBox.textContent = "❌ " + msg;
+}
+</script>
+</body>
+</html>
