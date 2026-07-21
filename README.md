@@ -54,6 +54,31 @@ verification flags, unit-grouped tables, and data-quality footer as the CLI.
 | `--max-stores`, `-m` | 6 | Max stores to search |
 | `--max-concurrency` | 4 | Concurrent price-scout agent runs |
 | `--output-json PATH` | — | Save the full structured report as JSON |
+| `--offline` | off | Privacy mode — no third-party search calls at all (see below) |
+
+## Privacy
+
+Your location and item list are the only things this tool sends outward, and
+they go to two third parties: the Moonshot API (Kimi K3) and a web search
+backend. Three protections apply:
+
+- **Input scrubbing** — emails, phone numbers, and street addresses are
+  stripped before anything leaves the process. City/state/zip are kept, since
+  the locale is what makes a price search work: `123 Elm Street, Austin, TX`
+  is sent as `Austin, TX`.
+- **Log redaction** — API keys are masked before they can reach a log line,
+  progress line, or error message.
+- **Offline mode** — `--offline` (or `GROCERY_OFFLINE=1`) makes **zero**
+  third-party search calls. Since prices are only trusted when verified
+  against a search source, this necessarily produces a report with no price
+  data rather than model-recalled guesses. The report says so explicitly.
+
+Nothing is retained by this project: no telemetry, no database, no server-side
+storage. Full data-flow and retention details are in
+**[SECURITY.md](SECURITY.md)**, along with how to report a vulnerability.
+
+> ⚠️ The web UI has no authentication and binds to `127.0.0.1`. Don't expose it
+> to an untrusted network.
 
 ## Example Output (from a real run)
 

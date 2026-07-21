@@ -134,3 +134,30 @@ class TestEndToEnd:
         # Deterministic savings: 3.99 regular − 2.99 sale.
         assert report.total_potential_savings == 1.00
         assert report.optimized_trips[0].primary_store == "Kroger"
+
+    async def test_pipeline_scrubs_pii_from_locale(self):
+        """PII in the locale is stripped before any agent prompt is built."""
+        progress: list[str] = []
+        with (
+            sf.store_finder_agent.override(model=TestModel(custom_output_args=STORE_ARGS)),
+            ps.price_scout_agent.override(model=TestModel(custom_output_args=SCOUT_ARGS)),
+            da.deal_analyst_agent.override(model=TestModel(custom_output_args=ANALYST_ARGS)),
+        ):
+            report = await run_shopping_planner(
+                locale="123 Elm Street, Austin, TX",
+                items=["cherry tomatoes"],
+                max_stores=3,
+                on_progress=progress.append,
+            )
+
+        # The street is gone from the locale that reaches the report/prompts,
+        # the usable part of the location survives, and the notice names the
+        # category removed without echoing the value.
+        assert "Elm" not in report.locale
+        assert "Austin, TX" in report.locale
+        notice = next(m for m in progress if "Removed" in m)
+        assert "street address" in notice and "Elm" not in notice
+
+    async def test_pipeline_rejects_input_that_is_entirely_pii(self):
+        with pytest.raises(ValueError, match="privacy scrubbing"):
+            await run_shopping_planner(locale="ray@example.com", items=["milk"])

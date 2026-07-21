@@ -11,6 +11,11 @@ All results are normalized to {title, url, snippet} dicts. A module-level
 semaphore bounds concurrent outbound searches so dozens of concurrent price
 scouts don't hammer the search backend, and weekly-ad lookups are cached
 per (store, city) since every item at a store shares the same weekly ad.
+
+Privacy: this module is the ONLY place that talks to third-party search
+engines, so it is also where every query is PII-scrubbed and where offline
+mode is enforced. Both apply in web_search(), which every other search
+helper funnels through — keep it that way.
 """
 from __future__ import annotations
 import asyncio
@@ -20,6 +25,8 @@ import re
 from urllib.parse import quote_plus
 
 import httpx
+
+from tools.privacy import redact, scrub_text
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +40,24 @@ _RETRY_DELAYS_SECONDS = (3.0,)
 # (store, city) -> results cache for weekly ads; one search serves all items.
 _weekly_deals_cache: dict[tuple[str, str], list[dict]] = {}
 _weekly_deals_lock = asyncio.Lock()
+
+# Offline mode: no third-party search calls at all. Settable by the CLI/web
+# layer (--offline) or by env var for deployments that must never egress.
+_OFFLINE_OVERRIDE: bool | None = None
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def set_offline_mode(enabled: bool) -> None:
+    """Force offline mode on/off for this process (CLI flag wins over env)."""
+    global _OFFLINE_OVERRIDE
+    _OFFLINE_OVERRIDE = enabled
+
+
+def is_offline() -> bool:
+    """True when no query may leave this process."""
+    if _OFFLINE_OVERRIDE is not None:
+        return _OFFLINE_OVERRIDE
+    return os.getenv("GROCERY_OFFLINE", "").strip().lower() in _TRUTHY
 
 
 def format_results_for_llm(results: list[dict]) -> str:
@@ -72,7 +97,7 @@ def _ddgs_search_sync(query: str, max_results: int) -> list[dict]:
             with DDGS() as d:
                 rows = d.text(query, max_results=max_results, backend=backend)
         except Exception as e:
-            logger.warning("search backend %s failed: %s", backend, e)
+            logger.warning("search backend %s failed: %s", backend, redact(str(e)))
             last_error = e
             continue
         results = [
@@ -99,7 +124,7 @@ async def _ddgs_search(query: str, max_results: int) -> list[dict]:
         try:
             return await asyncio.to_thread(_ddgs_search_sync, query, max_results)
         except Exception as e:
-            logger.warning("ddgs search failed (attempt %d): %s", attempt + 1, e)
+            logger.warning("ddgs search failed (attempt %d): %s", attempt + 1, redact(str(e)))
             if attempt < len(_RETRY_DELAYS_SECONDS):
                 await asyncio.sleep(_RETRY_DELAYS_SECONDS[attempt])
     return []
@@ -124,7 +149,9 @@ async def _serpapi_search(query: str, max_results: int) -> list[dict]:
                 for item in data.get("organic_results", [])[:max_results]
             ]
     except Exception as e:
-        logger.warning("SerpAPI search failed: %s", e)
+        # httpx exception strings embed the full request URL, which carries
+        # api_key=... — this MUST stay redacted.
+        logger.warning("SerpAPI search failed: %s", redact(str(e)))
         return []
 
 
@@ -150,7 +177,7 @@ async def _ddg_html_scrape(query: str, max_results: int) -> list[dict]:
                 results.append({"title": title, "url": url_text, "snippet": snippet})
             return results
     except Exception as e:
-        logger.warning("DuckDuckGo HTML fallback failed: %s", e)
+        logger.warning("DuckDuckGo HTML fallback failed: %s", redact(str(e)))
         return []
 
 
@@ -158,7 +185,22 @@ async def web_search(query: str, max_results: int = 8) -> list[dict]:
     """
     Search the web, cascading through available strategies.
     Returns a list of {title, url, snippet} dicts (possibly empty).
+
+    Enforces the two privacy guarantees for the whole app: offline mode
+    short-circuits before any network call, and every query is PII-scrubbed
+    before it reaches a search engine.
     """
+    if is_offline():
+        logger.info("offline mode: search suppressed")
+        return []
+
+    query, removed = scrub_text(query)
+    if removed:
+        # Log the categories only — never the values that were removed.
+        logger.info("scrubbed %s from search query before sending", ", ".join(removed))
+    if not query.strip():
+        return []
+
     async with _SEARCH_SEMAPHORE:
         # With a SerpAPI key, use it as primary: reliable, higher quality, and
         # skips the free engines' rate-limit roulette. Without one, free

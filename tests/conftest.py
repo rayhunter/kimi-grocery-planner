@@ -7,6 +7,15 @@ import os
 
 os.environ.setdefault("MOONSHOT_API_KEY", "test-key-not-real")
 
+# Importing any agent module runs config.load_dotenv(), which would pull the
+# developer's REAL SERPAPI_KEY out of .env — and a real key makes web_search()
+# route to SerpAPI and bill live requests. Set it empty rather than deleting it:
+# load_dotenv() does not override variables already present, so an empty value
+# both blocks the .env value and reads as falsy at every call site.
+os.environ["SERPAPI_KEY"] = ""
+# Belt-and-braces: no test may egress to a search backend at all.
+os.environ["GROCERY_OFFLINE"] = "1"
+
 import pydantic_ai.models
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

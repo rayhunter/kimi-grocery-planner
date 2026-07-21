@@ -14,6 +14,7 @@ Environment variables:
     MOONSHOT_API_KEY       (required) — Your Kimi/Moonshot API key
     SERPAPI_KEY            (optional) — SerpAPI key for richer web search results
     KIMI_REASONING_EFFORT  (optional) — reasoning effort (default "max"; "off" to omit)
+    GROCERY_OFFLINE        (optional) — "1" to disable all third-party web search
 """
 from __future__ import annotations
 import asyncio
@@ -36,6 +37,8 @@ except ImportError:
 from agents.orchestrator import run_shopping_planner
 from models.report import ShoppingReport, ItemRecommendation
 from models.product import DealType, ProductListing
+from tools.privacy import redact
+from tools.web_search import set_offline_mode
 
 load_dotenv()
 
@@ -310,11 +313,22 @@ def parse_args():
         "--output-json",
         help="Save the full report as JSON to this file path",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Privacy mode: make no third-party web search calls at all. "
+             "No prices can be sourced or verified, so the report will be empty "
+             "of price data by design. Also settable via GROCERY_OFFLINE=1.",
+    )
     return parser.parse_args()
 
 
 async def main():
     args = parse_args()
+
+    # The flag only forces offline ON; without it, GROCERY_OFFLINE still applies.
+    if args.offline:
+        set_offline_mode(True)
 
     # Handle first positional arg as locale if --locale not given
     locale = args.locale
@@ -375,10 +389,11 @@ async def main():
             on_progress=on_progress,
         )
     except Exception as e:
+        msg = redact(str(e))
         if HAS_RICH:
-            console.print(f"\n[bold red]❌ Error: {e}[/bold red]")
+            console.print(f"\n[bold red]❌ Error: {msg}[/bold red]")
         else:
-            print(f"\n❌ Error: {e}")
+            print(f"\n❌ Error: {msg}")
         raise
 
     # Render the report

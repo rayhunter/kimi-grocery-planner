@@ -25,6 +25,8 @@ from agents.orchestrator import run_shopping_planner
 from models.report import ShoppingReport, ItemRecommendation
 from models.product import DealType
 from main import grouped_listings, unit_display, rank_label
+from tools.privacy import redact
+from tools.web_search import is_offline, set_offline_mode
 
 app = FastAPI(title="Kimi K3 Grocery Planner")
 
@@ -150,7 +152,8 @@ async def _execute_run(run_id: str, req: RunRequest) -> None:
         run["report_json"] = report.model_dump(mode="json")
         run["status"] = "completed"
     except Exception as e:  # surface, don't crash the server
-        run["error"] = f"{type(e).__name__}: {e}"
+        # Redact: this string is returned over HTTP to the browser.
+        run["error"] = redact(f"{type(e).__name__}: {e}")
         run["status"] = "failed"
 
 
@@ -193,6 +196,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Grocery planner web UI")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Privacy mode: no third-party web search for any run on this server. "
+             "Server-wide, not per-request. Also settable via GROCERY_OFFLINE=1.",
+    )
     args = parser.parse_args()
+    if args.offline:
+        set_offline_mode(True)
     print(f"🛒 Grocery planner UI → http://{args.host}:{args.port}")
+    if is_offline():
+        print("🔒 Offline mode: no third-party search calls will be made.")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

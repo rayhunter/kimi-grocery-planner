@@ -17,6 +17,8 @@ from models.report import AnalystOutput, ItemRecommendation, ShoppingReport
 from agents.store_finder import find_stores_near
 from agents.price_scout import scout_prices
 from agents.deal_analyst import analyze_deals
+from tools.privacy import redact, scrub_text
+from tools.web_search import is_offline
 
 
 def _dedupe_stores(stores: list[Store]) -> list[Store]:
@@ -48,6 +50,7 @@ def build_report(
     all_listings: dict[str, list[ProductListing]],
     confidence_notes: dict[str, str],
     analysis: AnalystOutput,
+    offline: bool = False,
 ) -> ShoppingReport:
     """Assemble the final report from real listings + the analyst's analysis."""
     by_id: dict[str, ProductListing] = {
@@ -85,6 +88,11 @@ def build_report(
     total = sum(len(v) for v in all_listings.values())
     unverified = sum(1 for v in all_listings.values() for l in v if not l.price_verified)
     quality_bits = []
+    if offline:
+        quality_bits.append(
+            "Offline mode: no third-party web search was performed, so no price "
+            "could be sourced or verified. Store lists reflect model knowledge only."
+        )
     if analysis.overall_data_notes:
         quality_bits.append(analysis.overall_data_notes)
     if unverified:
@@ -129,7 +137,29 @@ async def run_shopping_planner(
     """
     def progress(msg: str):
         if on_progress:
-            on_progress(msg)
+            # Progress lines reach terminals, the web UI, and any log the
+            # caller wires up — redact before they leave this function.
+            on_progress(redact(msg))
+
+    # Scrub PII once, at the entry point: everything downstream (model
+    # prompts and search queries alike) sees only the scrubbed values.
+    locale, removed = scrub_text(locale)
+    scrubbed_items: list[str] = []
+    for item in items:
+        clean, item_removed = scrub_text(item)
+        removed.extend(item_removed)
+        if clean.strip():
+            scrubbed_items.append(clean)
+    items = scrubbed_items
+    if removed:
+        # Report the categories, never the removed values themselves.
+        progress(f"🔒 Removed {', '.join(sorted(set(removed)))} from your input before searching.")
+    if not locale.strip() or not items:
+        raise ValueError("Location and items are empty after privacy scrubbing.")
+
+    offline = is_offline()
+    if offline:
+        progress("🔒 Offline mode: no third-party search will be performed.")
 
     # ── PHASE 1: Discover stores ───────────────────────────────────────────
     progress(f"🔍 Discovering grocery stores near {locale}...")
@@ -150,7 +180,7 @@ async def run_shopping_planner(
                 scout_notes[item].append(f"{store.display_name}: {result.confidence}")
                 return item, result.listings
             except Exception as e:
-                progress(f"⚠️  Could not get prices for '{item}' at {store.name}: {e}")
+                progress(f"⚠️  Could not get prices for '{item}' at {store.name}: {redact(str(e))}")
                 scout_notes[item].append(f"{store.display_name}: failed ({type(e).__name__})")
                 return item, []
 
@@ -173,7 +203,7 @@ async def run_shopping_planner(
     # ── PHASE 3: Analyze and assemble report ───────────────────────────────
     progress("🧠 Kimi K3 analyzing deals and optimizing your shopping trip...")
     analysis = await analyze_deals(locale, stores, all_listings, confidence_notes)
-    report = build_report(locale, stores, all_listings, confidence_notes, analysis)
+    report = build_report(locale, stores, all_listings, confidence_notes, analysis, offline=offline)
     progress("✅ Shopping report ready!")
 
     return report

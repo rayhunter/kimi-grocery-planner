@@ -18,6 +18,7 @@ cp .env.example .env   # then set MOONSHOT_API_KEY (required); SERPAPI_KEY, KIMI
 python main.py "Austin, TX" "cherry tomatoes" "broccoli"
 python main.py --locale "94102" --items "avocados" --max-stores 8 --max-concurrency 4 --output-json report.json
 python main.py   # interactive mode, prompts for location/items
+python main.py --offline "Austin, TX" "avocados"   # no third-party search at all
 
 # Run (web UI) — serves a form page at http://127.0.0.1:8000
 python web.py [--port 9000]
@@ -28,7 +29,8 @@ python -m pytest                       # whole suite
 python -m pytest tests/test_agent_flows.py -k pipeline   # single test
 ```
 
-There are no linters or build steps configured. This is not a git repository.
+There are no linters or build steps configured. This is a git repository with a
+public GitHub remote — never commit real keys or a `.env` file.
 
 ## Architecture
 
@@ -61,6 +63,31 @@ The report's integrity rests on three mechanisms; changes must preserve all of t
 
 - `product.py` — `PricePoint` has a sanity validator (drops "sale" prices ≥ regular and implausible percent_off) and `effective_price` honors `percent_off` when no explicit sale price. `ProductListing` carries `listing_id` and `price_verified`.
 - `report.py` — two layers: `AnalystOutput`/`ItemAnalysis` (what the LLM emits, ID references only) vs `ShoppingReport`/`ItemRecommendation` (assembled in code; `best_pick` is `None` when no data — renderers must handle that honestly).
+
+### Privacy layer (`tools/privacy.py`) — do not regress this either
+
+Two synchronous helpers, both cheap enough to sit on hot paths:
+
+- `scrub_text()` / `scrub_query()` strip emails, phone numbers, and street
+  addresses. Applied in **two** places on purpose: once in
+  `run_shopping_planner` (so model prompts never see PII) and once in
+  `web_search()` (the choke point, so no new search call site can bypass it).
+  City/state/zip must keep surviving — the locale is the useful part.
+- `redact()` masks secrets before text reaches a log/progress line or error.
+  The live leak path it exists for: httpx exception strings embed the request
+  URL, and the SerpAPI URL carries `api_key=`. Any new `logger.*` call or
+  user-facing error string carrying an exception must wrap it in `redact()`.
+
+**Offline mode** (`--offline`, `web.py --offline`, or `GROCERY_OFFLINE=1`) is
+enforced in `web_search()` by returning `[]` *before* any network call —
+process-global via `set_offline_mode()`, not per-request (a per-request toggle
+would race across concurrent runs). It intentionally yields a report with no
+price data; `build_report(offline=True)` discloses this in the data-quality
+notes. Do not add a model-knowledge price fallback for this mode.
+
+Tests force `SERPAPI_KEY=""` and `GROCERY_OFFLINE=1` in `tests/conftest.py`
+*before* agent imports — `config.load_dotenv()` would otherwise pull the real
+key out of `.env` and route tests to live, billed SerpAPI requests.
 
 ### Web search (`tools/web_search.py`)
 
